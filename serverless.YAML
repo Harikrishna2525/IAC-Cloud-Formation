@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09' 
+Description: Serverless app - Lambda + API Gateway + DynamoDB
+
+Resources:
+  UsersTable: # Logical ID
+    Type: AWS::DynamoDB::Table # Resource Type
+    Properties:
+      TableName: UsersTable
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  UserLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: UserLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaDynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt UsersTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  UserLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: User
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Role: !GetAtt UserLambdaRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamo = new AWS.DynamoDB.DocumentClient();
+
+          exports.handler = async (event) => {
+            const body = JSON.parse(event.body || '{}');
+            const response = { statusCode: 200, body: '' };
+
+            if (event.httpMethod === 'POST') {
+              await dynamo.put({
+                TableName: 'UsersTable',
+                Item: { userId: body.userId, name: body.name }
+              }).promise();
+              response.body = JSON.stringify({ message: 'User added!' });
+            } else if (event.httpMethod === 'GET') {
+              const data = await dynamo.scan({ TableName: 'UsersTable' }).promise();
+              response.body = JSON.stringify(data.Items);
+            }
+
+            return response;
+          };
+
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: UserAPI
+
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: user
+      RestApiId: !Ref ApiGateway
+
+  ApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UserLambdaFunction.Arn}/invocations
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref UserLambdaFunction
+      Principal: apigateway.amazonaws.com
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: ApiMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+
+Outputs:
+  ApiUrl:
+    Description: Invoke URL for the API
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/user"
