@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Serverless stack & Bucket - S3 Bucket, DynamoDB, Lambda, HTTP API
+
+Resources:
+  # -----------------------
+  # S3 BUCKET
+  # -----------------------
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: haribucketaws-2525
+
+  # -----------------------
+  # DYNAMODB TABLE
+  # -----------------------
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Users
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+
+  # -----------------------
+  # LAMBDA EXECUTION ROLE
+  # -----------------------
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: UserFunction-Role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+
+  # -----------------------
+  # LAMBDA FUNCTION
+  # -----------------------
+  UserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: UserFunction
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: "Hello from UserFunction!" })
+            };
+          };
+
+  # -----------------------
+  # HTTP API (NOT REST API)
+  # -----------------------
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: UserHttpApi
+      ProtocolType: HTTP
+
+  # -----------------------
+  # API INTEGRATION
+  # -----------------------
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UserFunction.Arn}/invocations
+      PayloadFormatVersion: "2.0"
+
+  # -----------------------
+  # API ROUTE
+  # -----------------------
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /users"
+      Target: !Join ["", ["integrations/", !Ref ApiIntegration]]
+
+  # -----------------------
+  # PERMISSION (API -> LAMBDA)
+  # -----------------------
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UserFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*/users
+
+Outputs:
+  ApiEndpoint:
+    Description: HTTP API endpoint URL
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
