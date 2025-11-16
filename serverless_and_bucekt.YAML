@@ -5,8 +5,8 @@ Resources:
   # -----------------------
   # S3 BUCKET
   # -----------------------
-  S3Bucket:
-    Type: AWS::S3::Bucket
+  S3Bucket: # Logical ID
+    Type: AWS::S3::Bucket # Resource Type
     Properties:
       BucketName: haribucketaws-2525
 
@@ -52,7 +52,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: UserFunction
-      Runtime: nodejs18.x
+      Runtime: nodejs22.x
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
@@ -93,6 +93,14 @@ Resources:
       ApiId: !Ref HttpApi
       RouteKey: "GET /users"
       Target: !Join ["", ["integrations/", !Ref ApiIntegration]]
+
+  APiRoutePost:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /users"
+      Target: !Join ["", ["integrations/", !Ref ApiIntegration]]
+
 
   # -----------------------
   # PERMISSION (API -> LAMBDA)
